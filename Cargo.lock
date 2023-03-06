@@ -252,19 +252,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "clap-duration"
-version = "0.1.11"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "41c07d35d7053e936101363ca39b59b61a3150103e88cf45174af65de954706c"
-dependencies = [
- "clap",
- "duration-human",
- "quote",
- "syn",
- "thiserror",
-]
-
-[[package]]
 name = "clap_derive"
 version = "4.1.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -588,19 +575,6 @@ name = "dunce"
 version = "1.0.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "0bd4b30a6560bbd9b4620f4de34c3f14f60848e58a9b7216801afcb4c7b31c3c"
-
-[[package]]
-name = "duration-human"
-version = "0.1.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "56ecd7b96a60d705aea85c88b53dc7f0e6e38dfa1697e8fe0296360ba9150b88"
-dependencies = [
- "clap",
- "lazy-regex",
- "regex",
- "syn",
- "thiserror",
-]
 
 [[package]]
 name = "embed_plist"
@@ -1377,29 +1351,6 @@ dependencies = [
  "html5ever",
  "matches",
  "selectors",
-]
-
-[[package]]
-name = "lazy-regex"
-version = "2.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a505da2f89befd87ab425d252795f0f285e100b43e7d22d29528df3d9a576793"
-dependencies = [
- "lazy-regex-proc_macros",
- "once_cell",
- "regex",
-]
-
-[[package]]
-name = "lazy-regex-proc_macros"
-version = "2.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "8edfc11b8f56ce85e207e62ea21557cfa09bb24a8f6b04ae181b086ff8611c22"
-dependencies = [
- "proc-macro2",
- "quote",
- "regex",
- "syn",
 ]
 
 [[package]]
@@ -2425,7 +2376,7 @@ dependencies = [
 
 [[package]]
 name = "spring"
-version = "0.0.0"
+version = "0.1.0"
 dependencies = [
  "governor",
  "serde",
@@ -2439,7 +2390,6 @@ name = "springd"
 version = "0.1.0"
 dependencies = [
  "clap",
- "clap-duration",
 ]
 
 [[package]]
