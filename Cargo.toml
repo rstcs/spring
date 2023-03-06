@@ -1,0 +1,6 @@
+[workspace]
+
+members = [
+    "springd",
+    "src-tauri"
+]
