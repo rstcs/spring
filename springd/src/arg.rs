@@ -1,6 +1,7 @@
 //! arg module define the application entry arguments [Arg]
 
 use clap::{crate_authors, Parser, ValueHint};
+use clap_complete::Shell;
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -113,7 +114,7 @@ pub struct Arg {
         help = "Number of requests",
         value_delimiter = ' ',
         conflicts_with = "duration",
-        required_unless_present = "duration"
+        required_unless_present_any(["duration", "completions"])
     )]
     pub(crate) requests: Option<u64>,
 
@@ -124,7 +125,7 @@ pub struct Arg {
         value_parser = parse_duration,
         help = "Duration of test",
         conflicts_with = "requests",
-        required_unless_present = "requests"
+        required_unless_present_any(["requests", "completions"])
     )]
     pub(crate) duration: Option<Duration>,
 
@@ -132,8 +133,16 @@ pub struct Arg {
     #[arg(long, short = 'r', help = "Rate limit in requests per second")]
     pub(crate) rate: Option<u16>,
 
-    /// Target test url
-    pub(crate) uri: String,
+    #[arg(long, value_enum)]
+    pub completions: Option<Shell>,
+
+    /// Target Url
+    #[arg(
+        required_unless_present("completions"), 
+        value_hint = ValueHint::Url,
+        help = "Target Url"
+    )]
+    pub(crate) uri: Option<String>,
 }
 
 #[cfg(test)]
