@@ -9,6 +9,7 @@ description = "A http server benchmark tool, written in rust."
 
 [dependencies]
 clap = { version = "4.1.8", features = ["derive", "cargo", "env"] }
+clap_complete = "4.1.4"
 
 [[bin]]
 name = "springd"
