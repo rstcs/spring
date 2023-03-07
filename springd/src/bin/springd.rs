@@ -13,5 +13,7 @@ fn main() {
         std::process::exit(0);
     }
 
-    println!("{:#?}", arg);
+    let cmd = Arg::command();
+
+    println!("green, true, {:#?}, {}", arg, cmd.get_color());
 }

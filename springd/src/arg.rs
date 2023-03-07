@@ -1,6 +1,6 @@
 //! arg module define the application entry arguments [Arg]
 
-use clap::{crate_authors, Parser, ValueHint};
+use clap::{Parser, ValueHint};
 use clap_complete::Shell;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -27,7 +27,15 @@ fn parse_duration(arg: &str) -> Result<Duration, std::num::ParseIntError> {
 }
 
 #[derive(Debug, Parser)]
-#[command(author(crate_authors!("\n")), version, about, allow_missing_positional(true))]
+#[command(author, version, about, allow_missing_positional(true))]
+#[command(help_template(
+    "\
+{before-help}{name}({version}){tab}{about-with-newline}
+{usage-heading} {usage}
+
+{all-args}{after-help}\
+"
+))]
 pub struct Arg {
     /// Maximum number of concurrent connections
     #[arg(
@@ -112,7 +120,6 @@ pub struct Arg {
         long,
         short = 'n',
         help = "Number of requests",
-        value_delimiter = ' ',
         conflicts_with = "duration",
         required_unless_present_any(["duration", "completions"])
     )]
