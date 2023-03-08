@@ -1,9 +1,11 @@
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
+use log::debug;
 use springd::Arg;
 use std::io;
 
 fn main() {
+    env_logger::init();
     let arg = Arg::parse();
 
     if let Some(shell) = arg.completions {
@@ -15,5 +17,5 @@ fn main() {
 
     let cmd = Arg::command();
 
-    println!("green, true, {:#?}, {}", arg, cmd.get_color());
+    debug!("output {:#?}, {}", arg, cmd.get_color());
 }
