@@ -1,6 +1,12 @@
 //! arg module define the application entry arguments [Arg]
 
-use clap::{Parser, ValueHint};
+use clap::{
+    builder::{
+        IntoResettable, OsStr, PossibleValue,
+        Resettable::{self, *},
+    },
+    Parser, ValueEnum, ValueHint,
+};
 use clap_complete::Shell;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -24,6 +30,54 @@ fn parse_duration(arg: &str) -> Result<Duration, std::num::ParseIntError> {
 
     let seconds = input.parse()?;
     Ok(Duration::from_secs(seconds))
+}
+
+/// define supported http methods
+#[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
+pub enum Method {
+    Get,
+    Post,
+    Put,
+    Delete,
+    Head,
+    Patch,
+}
+
+impl IntoResettable<OsStr> for Method {
+    fn into_resettable(self) -> Resettable<OsStr> {
+        match self {
+            Method::Get => Value(OsStr::from("GET")),
+            Method::Post => Value(OsStr::from("POST")),
+            Method::Put => Value(OsStr::from("PUT")),
+            Method::Delete => Value(OsStr::from("DELETE")),
+            Method::Head => Value(OsStr::from("HEAD")),
+            Method::Patch => Value(OsStr::from("PATCH")),
+        }
+    }
+}
+
+impl ValueEnum for Method {
+    fn value_variants<'a>() -> &'a [Self] {
+        &[
+            Method::Get,
+            Method::Put,
+            Method::Post,
+            Method::Delete,
+            Method::Head,
+            Method::Patch,
+        ]
+    }
+
+    fn to_possible_value<'a>(&self) -> Option<PossibleValue> {
+        Some(match self {
+            Method::Get => PossibleValue::new("GET"),
+            Method::Put => PossibleValue::new("PUT"),
+            Method::Post => PossibleValue::new("POST"),
+            Method::Delete => PossibleValue::new("DELETE"),
+            Method::Head => PossibleValue::new("HEAD"),
+            Method::Patch => PossibleValue::new("PATCH"),
+        })
+    }
 }
 
 #[derive(Debug, Parser)]
@@ -61,8 +115,14 @@ pub struct Arg {
     pub(crate) latencies: bool,
 
     /// Request method
-    #[arg(long, short, default_value = "GET", help = "Request method")]
-    pub(crate) method: String,
+    #[arg(
+        long,
+        short,
+        default_value = Method::Get,
+        value_enum,
+        help = "Request method"
+    )]
+    pub(crate) method: Method,
 
     /// Request Body
     #[arg(long, short, help = "Request Body")]
