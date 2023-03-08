@@ -12,10 +12,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 fn is_number(s: &str) -> bool {
-    match s.parse::<u64>() {
-        Ok(_) => true,
-        Err(_) => false,
-    }
+    s.parse::<u64>().is_ok()
 }
 
 fn parse_duration(arg: &str) -> Result<Duration, std::num::ParseIntError> {
@@ -215,17 +212,78 @@ pub struct Arg {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::CommandFactory;
+    const URI: &str = "https://localhost/test";
 
     #[test]
     fn test_is_number() {
-        assert_eq!(is_number("12234"), true);
-        assert_eq!(is_number("12234s"), false);
+        assert!(is_number("12234"));
+        assert!(!is_number("12234s"));
     }
 
     #[test]
     fn test_parse_duration() {
-        assert_eq!(parse_duration("123").is_ok(), true);
-        assert_eq!(parse_duration("123s").is_ok(), true);
-        assert_eq!(parse_duration("123x").is_ok(), false);
+        assert!(parse_duration("123").is_ok());
+        assert!(parse_duration("123s").is_ok());
+        assert!(parse_duration("123x").is_err());
+    }
+
+    #[test]
+    fn test_method_choices() {
+        let mut cmd = Arg::command();
+        let methods = vec!["GET", "PUT", "POST", "DELETE", "HEAD", "PATCH"];
+        for method in methods {
+            let args = vec!["springd", "-n", "20", "-m", method, URI];
+            let result = cmd.try_get_matches_from_mut(args);
+            assert!(result.is_ok());
+        }
+
+        let result = cmd.try_get_matches_from_mut(vec![
+            "springd", "-n", "20", "-m", "get", URI,
+        ]);
+        assert!(result.as_ref().is_err());
+        let err_msg = result.err().unwrap().to_string();
+        assert!(err_msg
+            .contains("possible values: GET, PUT, POST, DELETE, HEAD, PATCH"));
+    }
+
+    #[test]
+    fn test_required_parameters() {
+        let mut cmd = Arg::command();
+        let result = cmd.try_get_matches_from_mut(vec!["springd"]);
+        assert!(result.as_ref().is_err());
+        let err_msg = result.err().unwrap().to_string();
+        assert!(err_msg.contains(
+            "error: the following required arguments were not provided:
+  --requests <REQUESTS>
+  --duration <DURATION>
+  <URI>"
+        ))
+    }
+
+    #[test]
+    fn test_must_provide_requests_or_duration_parameters() {
+        let mut cmd = Arg::command();
+
+        // neither provided
+        let result = cmd.try_get_matches_from_mut(vec!["springd", URI]);
+        assert!(result.as_ref().is_err());
+        let err_msg = result.err().unwrap().to_string();
+        assert!(err_msg.contains(
+            "error: the following required arguments were not provided:
+  --requests <REQUESTS>
+  --duration <DURATION>"
+        ));
+
+        // both provide
+        let result = cmd.try_get_matches_from_mut(vec![
+            "springd", "-n", "20", "-d", "300", URI,
+        ]);
+        assert!(result.as_ref().is_err());
+        let err_msg = result.err().unwrap().to_string();
+        assert!(err_msg.contains(
+            "error: the argument '--requests <REQUESTS>' \
+        cannot be used with '--duration <DURATION>'"
+        ));
     }
 }
