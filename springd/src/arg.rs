@@ -138,6 +138,7 @@ pub struct Arg {
     #[arg(
         long,
         value_hint = ValueHint::FilePath,
+        requires("key"),
         help = "Path to the client's TLS Certificate"
     )]
     pub(crate) cert: Option<PathBuf>,
@@ -145,6 +146,7 @@ pub struct Arg {
     /// Path to the client's TLS Certificate Private Key
     #[arg(
         long,
+        requires("cert"),
         value_hint = ValueHint::FilePath,
         help = "Path to the client's TLS Certificate Private Key"
     )]
@@ -285,5 +287,39 @@ mod tests {
             "error: the argument '--requests <REQUESTS>' \
         cannot be used with '--duration <DURATION>'"
         ));
+    }
+
+    #[test]
+    fn test_require_key_and_cert_at_the_same_time() {
+        let mut cmd = Arg::command();
+
+        // only provide key
+        let result = cmd.try_get_matches_from_mut(vec![
+            "springd", "-n", "20", "--key", "key.crt", URI,
+        ]);
+        assert!(result.as_ref().is_err());
+        let err_msg = result.err().unwrap().to_string();
+        assert!(err_msg.contains(
+            "error: the following required arguments were not provided:
+  --cert <CERT>"
+        ));
+
+        // only provide cert
+        let result = cmd.try_get_matches_from_mut(vec![
+            "springd", "-n", "20", "--cert", "cert.crt", URI,
+        ]);
+        assert!(result.as_ref().is_err());
+        let err_msg = result.err().unwrap().to_string();
+        assert!(err_msg.contains(
+            "error: the following required arguments were not provided:
+  --key <KEY>"
+        ));
+
+        // both provided
+        let result = cmd.try_get_matches_from_mut(vec![
+            "springd", "-n", "20", "--cert", "cert.crt", "--key", "key.crt",
+            URI,
+        ]);
+        assert!(result.as_ref().is_ok());
     }
 }
