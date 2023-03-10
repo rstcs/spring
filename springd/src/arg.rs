@@ -5,7 +5,7 @@ use clap::{
         IntoResettable, OsStr, PossibleValue,
         Resettable::{self, *},
     },
-    Parser, ValueEnum, ValueHint,
+    ArgGroup, Parser, ValueEnum, ValueHint,
 };
 use clap_complete::Shell;
 use std::path::PathBuf;
@@ -42,7 +42,7 @@ pub enum Method {
 
 impl Method {
     /// convert to [reqwest::Method]
-    pub(crate) fn to_reqwest_method(&self) -> reqwest::Method {
+    pub(crate) fn to_reqwest_method(self) -> reqwest::Method {
         match self {
             Method::Get => reqwest::Method::GET,
             Method::Post => reqwest::Method::POST,
@@ -93,6 +93,10 @@ impl ValueEnum for Method {
 
 #[derive(Debug, Parser)]
 #[command(author, version, about, allow_missing_positional(true))]
+#[command(group(ArgGroup::new("json").args(["json_body", "json_file"])))]
+#[command(group(ArgGroup::new("text").args(["text_body", "text_file"])))]
+#[command(group(ArgGroup::new("multipart").args(["mp", "mp_file"]).multiple(true)))]
+#[command(group(ArgGroup::new("mode").args(["duration", "requests"])))]
 #[command(help_template(
     "\
 {before-help}{name}({version}){tab}{about-with-newline}
@@ -135,19 +139,41 @@ pub struct Arg {
     )]
     pub(crate) method: Method,
 
-    /// Request Body
-    #[arg(long, short, conflicts_with = "body_file", help = "Request Body")]
-    pub(crate) body: Option<String>,
+    /// Disable HTTP keep-alive
+    #[arg(long, short = 'a', help = "Disable HTTP keep-alive")]
+    pub(crate) disable_keep_alive: bool,
 
-    /// File to use as Request Body
     #[arg(
         long,
-        short = 'f',
-        value_hint = ValueHint::FilePath,
-        conflicts_with = "body",
-        help = "File to use as Request Body"
+        short = 'H',
+        num_args = 0..,
+        help = "HTTP headers to use(can be repeated)",
+        value_delimiter = ' '
     )]
-    pub(crate) body_file: Option<PathBuf>,
+    pub(crate) headers: Vec<String>,
+
+    /// Number of requests
+    #[arg(
+        long,
+        short = 'n',
+        help = "Number of requests",
+        required_unless_present_any(["duration", "completions"])
+    )]
+    pub(crate) requests: Option<u64>,
+
+    /// Duration of test
+    #[arg(
+        long,
+        short = 'd',
+        value_parser = parse_duration,
+        help = "Duration of test",
+        required_unless_present_any(["requests", "completions"])
+    )]
+    pub(crate) duration: Option<Duration>,
+
+    /// Rate limit in requests per second
+    #[arg(long, short = 'r', help = "Rate limit in requests per second")]
+    pub(crate) rate: Option<u16>,
 
     /// Path to the client's TLS Certificate
     #[arg(
@@ -176,43 +202,69 @@ pub struct Arg {
     )]
     pub(crate) insecure: bool,
 
-    /// Disable HTTP keep-alive
-    #[arg(long, short = 'a', help = "Disable HTTP keep-alive")]
-    pub(crate) disable_keep_alive: bool,
-
+    /// File to use as json request body
     #[arg(
         long,
-        short = 'H',
+        value_hint = ValueHint::FilePath,
+        conflicts_with_all(["mp_file", "mp", "form", "text_body", "text_file", "json_body"]),
+        help = "File to use as Request body for ContentType: application/json"
+    )]
+    pub(crate) json_file: Option<PathBuf>,
+
+    /// JSON request body
+    #[arg(
+        long,
+        conflicts_with_all(["mp_file", "mp", "form", "text_body", "text_file", "json_file"]),
+        help = "Request body for ContentType: application/json")]
+    pub(crate) json_body: Option<String>,
+
+    /// File to use as text request Body
+    #[arg(
+        long,
+        value_hint = ValueHint::FilePath,
+        conflicts_with_all(["mp_file", "mp", "form", "text_body", "json_file", "json_body"]),
+        help = "File to use as Request body for ContentType: application/text"
+    )]
+    pub(crate) text_file: Option<PathBuf>,
+
+    /// Text request body
+    #[arg(
+        long,
+        conflicts_with_all(["mp_file", "mp", "form", "text_file", "json_file", "json_body"]),
+        help = "Request body for ContentType: application/text"
+    )]
+    pub(crate) text_body: Option<String>,
+
+    /// multipart body parameters
+    #[arg(
+        long,
         num_args = 0..,
-        help = "HTTP headers to use(can be repeated)",
-        value_delimiter = ' '
+        value_delimiter = ' ',
+        conflicts_with_all(["form", "text_body", "text_file", "json_file", "json_body"]),
+        help = "Multipart body parameters, Content-Type: multipart/form-data, example: --mp k:v"
     )]
-    pub(crate) headers: Vec<String>,
+    pub(crate) mp: Vec<String>,
 
-    /// Number of requests
+    /// multipart body file
     #[arg(
         long,
-        short = 'n',
-        help = "Number of requests",
-        conflicts_with = "duration",
-        required_unless_present_any(["duration", "completions"])
+        num_args = 0..,
+        value_delimiter = ' ',
+        value_hint = ValueHint::FilePath,
+        conflicts_with_all(["form", "text_body", "text_file", "json_file", "json_body"]),
+        help = "Multipart body files, Content-Type: multipart/form-data"
     )]
-    pub(crate) requests: Option<u64>,
+    pub(crate) mp_file: Vec<PathBuf>,
 
-    /// Duration of test
+    /// form request parameters
     #[arg(
         long,
-        short = 'd',
-        value_parser = parse_duration,
-        help = "Duration of test",
-        conflicts_with = "requests",
-        required_unless_present_any(["requests", "completions"])
+        num_args = 0..,
+        value_delimiter = ' ',
+        conflicts_with_all(["mp_file", "mp", "text_body", "text_file", "json_file", "json_file"]),
+        help = "Form request parameters, Content-Type: application/x-www-form-urlencoded, example: --form k:v"
     )]
-    pub(crate) duration: Option<Duration>,
-
-    /// Rate limit in requests per second
-    #[arg(long, short = 'r', help = "Rate limit in requests per second")]
-    pub(crate) rate: Option<u16>,
+    pub(crate) form: Vec<String>,
 
     #[arg(long, value_enum)]
     pub completions: Option<Shell>,
@@ -229,7 +281,7 @@ pub struct Arg {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use clap::CommandFactory;
+    use clap::{Command, CommandFactory};
     const URI: &str = "https://localhost/test";
 
     #[test]
@@ -274,7 +326,7 @@ mod tests {
             "error: the following required arguments were not provided:
   --requests <REQUESTS>
   --duration <DURATION>
-  <URI>"
+  <URL>"
         ))
     }
 
@@ -336,5 +388,164 @@ mod tests {
             URI,
         ]);
         assert!(result.as_ref().is_ok());
+    }
+
+    #[test]
+    fn test_json_body_or_json_file() {
+        let mut cmd = Arg::command();
+
+        // both provided
+        let result = cmd.try_get_matches_from_mut(vec![
+            "springd",
+            "-n",
+            "20",
+            "--json-body",
+            "jsonBody",
+            "--json-file",
+            "jsonBody.txt",
+            URI,
+        ]);
+        assert!(result.as_ref().is_err());
+
+        // only json body
+        let result = cmd.try_get_matches_from_mut(vec![
+            "springd",
+            "-n",
+            "20",
+            "--json-body",
+            "jsonBody",
+            URI,
+        ]);
+        assert!(result.as_ref().is_ok());
+
+        // only json body
+        let result = cmd.try_get_matches_from_mut(vec![
+            "springd",
+            "-n",
+            "20",
+            "--json-file",
+            "jsonBody.txt",
+            URI,
+        ]);
+        assert!(result.as_ref().is_ok());
+    }
+
+    #[test]
+    fn test_json_body_conflicts_with_other_body() {
+        let mut cmd = Arg::command();
+        let mut args =
+            vec!["springd", "-n", "20", "--json-body", "jb", "xx", "xx", URI];
+        let conflicts_params = vec![
+            "--mp-file",
+            "--mp",
+            "--form",
+            "--text-body",
+            "--text-file",
+            "--json-file",
+        ];
+        validate_args_conflict(conflicts_params, args, cmd);
+    }
+
+    #[test]
+    fn test_json_file_conflicts_with_other_body() {
+        let mut cmd = Arg::command();
+        let mut args =
+            vec!["springd", "-n", "20", "--json-file", "jb", "xx", "xx", URI];
+        let conflicts_params = vec![
+            "--mp-file",
+            "--mp",
+            "--form",
+            "--text-body",
+            "--text-file",
+            "--json-body",
+        ];
+        validate_args_conflict(conflicts_params, args, cmd);
+    }
+
+    #[test]
+    fn test_text_body_or_text_file() {
+        let mut cmd = Arg::command();
+
+        // both provided
+        let result = cmd.try_get_matches_from_mut(vec![
+            "springd",
+            "-n",
+            "20",
+            "--text-body",
+            "text",
+            "--text-file",
+            "ts.txt",
+            URI,
+        ]);
+        assert!(result.as_ref().is_err());
+
+        // only json body
+        let result = cmd.try_get_matches_from_mut(vec![
+            "springd",
+            "-n",
+            "20",
+            "--text-body",
+            "text",
+            URI,
+        ]);
+        assert!(result.as_ref().is_ok());
+
+        // only json body
+        let result = cmd.try_get_matches_from_mut(vec![
+            "springd",
+            "-n",
+            "20",
+            "--text-file",
+            "jsonBody.txt",
+            URI,
+        ]);
+        assert!(result.as_ref().is_ok());
+    }
+
+    #[test]
+    fn test_text_body_conflicts_with_other_body() {
+        let mut cmd = Arg::command();
+        let mut args =
+            vec!["springd", "-n", "20", "--text-body", "jb", "xx", "xx", URI];
+        let conflicts_params = vec![
+            "--mp-file",
+            "--mp",
+            "--form",
+            "--json-body",
+            "--text-file",
+            "--json-file",
+        ];
+        validate_args_conflict(conflicts_params, args, cmd);
+    }
+
+    fn validate_args_conflict<'a>(
+        conflicts_params: Vec<&'a str>,
+        mut args: Vec<&'a str>,
+        mut cmd: Command,
+    ) {
+        for cp in conflicts_params {
+            args[5] = cp;
+            let result = cmd.try_get_matches_from_mut(args.clone());
+            assert!(result.as_ref().is_err());
+            let err_msg = result.err().unwrap().to_string();
+            let fragment = format!("cannot be used with '{cp}");
+            assert!(err_msg.contains(&fragment));
+        }
+    }
+
+    #[test]
+    fn test_text_file_conflicts_with_other_body() {
+        let mut cmd = Arg::command();
+        let mut args =
+            vec!["springd", "-n", "20", "--text-file", "jb", "xx", "xx", URI];
+        let conflicts_params = vec![
+            "--mp-file",
+            "--mp",
+            "--form",
+            "--text-body",
+            "--json-file",
+            "--json-body",
+        ];
+        validate_args_conflict(conflicts_params, args, cmd);
     }
 }

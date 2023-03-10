@@ -23,8 +23,6 @@ impl Task {
             dispatcher: Box::new(CountDispatcher::new()),
         })
     }
-
-    async fn worker(&self) {}
 }
 
 fn build_client(arg: &Arg) -> anyhow::Result<Client> {
