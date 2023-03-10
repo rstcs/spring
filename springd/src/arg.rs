@@ -147,8 +147,8 @@ pub struct Arg {
         long,
         short = 'H',
         num_args = 0..,
-        help = "HTTP headers to use(can be repeated)",
-        value_delimiter = ' '
+        value_delimiter = ',',
+        help = "HTTP headers to use, example: -H=k:v,k1:v1 -H=k2:v2"
     )]
     pub(crate) headers: Vec<String>,
 
@@ -239,9 +239,9 @@ pub struct Arg {
     #[arg(
         long,
         num_args = 0..,
-        value_delimiter = ' ',
+        value_delimiter = ',',
         conflicts_with_all(["form", "text_body", "text_file", "json_file", "json_body"]),
-        help = "Multipart body parameters, Content-Type: multipart/form-data, example: --mp k:v"
+        help = "Multipart body parameters, Content-Type: multipart/form-data, example: --mp=k1:v1,k2:v2"
     )]
     pub(crate) mp: Vec<String>,
 
@@ -249,10 +249,10 @@ pub struct Arg {
     #[arg(
         long,
         num_args = 0..,
-        value_delimiter = ' ',
+        value_delimiter = ',',
         value_hint = ValueHint::FilePath,
         conflicts_with_all(["form", "text_body", "text_file", "json_file", "json_body"]),
-        help = "Multipart body files, Content-Type: multipart/form-data"
+        help = "Multipart body files, Content-Type: multipart/form-data, example: --mp-file=t1.txt,t2.txt"
     )]
     pub(crate) mp_file: Vec<PathBuf>,
 
@@ -260,9 +260,9 @@ pub struct Arg {
     #[arg(
         long,
         num_args = 0..,
-        value_delimiter = ' ',
+        value_delimiter = ',',
         conflicts_with_all(["mp_file", "mp", "text_body", "text_file", "json_file", "json_file"]),
-        help = "Form request parameters, Content-Type: application/x-www-form-urlencoded, example: --form k:v"
+        help = "Form request parameters, Content-Type: application/x-www-form-urlencoded, example: --form=k:v,k1:v1"
     )]
     pub(crate) form: Vec<String>,
 
@@ -547,5 +547,140 @@ mod tests {
             "--json-body",
         ];
         validate_args_conflict(conflicts_params, args, cmd);
+    }
+
+    #[test]
+    fn test_multipart_param_exist_with_multipart_file() {
+        let mut cmd = Arg::command();
+        let mut args = vec![
+            "springd",
+            "-n",
+            "20",
+            "--mp=k1:v1,k2:v2",
+            "--mp-file=text1.txt,text2.txt",
+            URI,
+        ];
+        let result = cmd.try_get_matches_from_mut(args);
+        assert!(result.as_ref().is_ok());
+        let mps = result
+            .as_ref()
+            .unwrap()
+            .get_many::<String>("mp")
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(mps, ["k1:v1", "k2:v2"]);
+
+        let mp_files = result
+            .as_ref()
+            .unwrap()
+            .get_many::<PathBuf>("mp_file")
+            .unwrap()
+            .collect::<Vec<_>>();
+        let mp_files = mp_files
+            .iter()
+            .map(|x| x.to_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(mp_files, ["text1.txt", "text2.txt"]);
+    }
+
+    #[test]
+    fn test_mp_conflicts_with_other_body() {
+        let mut cmd = Arg::command();
+        let mut args = vec![
+            "springd",
+            "-n",
+            "20",
+            "--mp=k1:v1,k2:v2",
+            "--mp-file=text1.txt",
+            "xx",
+            "xx",
+            URI,
+        ];
+        let conflicts_params = vec![
+            "--text-file",
+            "--form",
+            "--text-body",
+            "--json-file",
+            "--json-body",
+        ];
+        validate_args_conflict(conflicts_params, args, cmd);
+    }
+
+    #[test]
+    fn test_parse_form_params() {
+        let mut cmd = Arg::command();
+
+        // style1
+        let mut args = vec!["springd", "-n", "20", "--form=k1:v1,k2:v2", URI];
+        let result = cmd.try_get_matches_from_mut(args);
+        assert!(result.as_ref().is_ok());
+        let forms = result
+            .as_ref()
+            .unwrap()
+            .get_many::<String>("form")
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(forms, ["k1:v1", "k2:v2"]);
+
+        // style2
+        let mut args =
+            vec!["springd", "-n", "20", "--form=k1:v1", "--form=k2:v2", URI];
+        let result = cmd.try_get_matches_from_mut(args);
+        assert!(result.as_ref().is_ok());
+        let forms = result
+            .as_ref()
+            .unwrap()
+            .get_many::<String>("form")
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(forms, ["k1:v1", "k2:v2"]);
+    }
+
+    #[test]
+    fn test_form_conflicts_with_other_body() {
+        let mut cmd = Arg::command();
+        let mut args = vec![
+            "springd",
+            "-n",
+            "20",
+            "--form=k1:v1,k2:v2",
+            "--form=k3:v3,k4:v4",
+            "xx",
+            "xx",
+            URI,
+        ];
+        let conflicts_params = vec![
+            "--text-file",
+            "--mp-file",
+            "--mp",
+            "--text-body",
+            "--json-file",
+            "--json-body",
+        ];
+        validate_args_conflict(conflicts_params, args, cmd);
+    }
+
+    #[test]
+    fn test_parse_headers_params() {
+        let mut cmd = Arg::command();
+
+        // style1
+        let mut args = vec![
+            "springd",
+            "-n",
+            "20",
+            "-H=k1:v1,k2:v2",
+            "--headers=k3:v3",
+            URI,
+        ];
+        let result = cmd.try_get_matches_from_mut(args);
+        assert!(result.as_ref().is_ok());
+        let headers = result
+            .as_ref()
+            .unwrap()
+            .get_many::<String>("headers")
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(headers, ["k1:v1", "k2:v2", "k3:v3"]);
     }
 }
