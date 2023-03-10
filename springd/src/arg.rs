@@ -40,6 +40,20 @@ pub enum Method {
     Patch,
 }
 
+impl Method {
+    /// convert to [reqwest::Method]
+    pub(crate) fn to_reqwest_method(&self) -> reqwest::Method {
+        match self {
+            Method::Get => reqwest::Method::GET,
+            Method::Post => reqwest::Method::POST,
+            Method::Put => reqwest::Method::PUT,
+            Method::Patch => reqwest::Method::PATCH,
+            Method::Delete => reqwest::Method::DELETE,
+            Method::Head => reqwest::Method::HEAD,
+        }
+    }
+}
+
 impl IntoResettable<OsStr> for Method {
     fn into_resettable(self) -> Resettable<OsStr> {
         match self {
@@ -122,7 +136,7 @@ pub struct Arg {
     pub(crate) method: Method,
 
     /// Request Body
-    #[arg(long, short, help = "Request Body")]
+    #[arg(long, short, conflicts_with = "body_file", help = "Request Body")]
     pub(crate) body: Option<String>,
 
     /// File to use as Request Body
@@ -130,6 +144,7 @@ pub struct Arg {
         long,
         short = 'f',
         value_hint = ValueHint::FilePath,
+        conflicts_with = "body",
         help = "File to use as Request Body"
     )]
     pub(crate) body_file: Option<PathBuf>,
@@ -208,7 +223,7 @@ pub struct Arg {
         value_hint = ValueHint::Url,
         help = "Target Url"
     )]
-    pub(crate) uri: Option<String>,
+    pub(crate) url: Option<String>,
 }
 
 #[cfg(test)]
