@@ -107,7 +107,7 @@ impl Dispatcher for CountDispatcher {
     }
 
     fn complete_job(&mut self) {
-        let _ = self.completed.fetch_add(1, SeqCst);
+        self.completed.fetch_add(1, SeqCst);
         if self.completed.load(SeqCst) >= self.total
             && !self.is_done.load(SeqCst)
         {

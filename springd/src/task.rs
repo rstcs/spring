@@ -10,30 +10,32 @@ use reqwest::{
     multipart, Body, Client, Request, RequestBuilder,
 };
 use std::{collections::HashMap, fs as sfs, sync::Arc};
-use tokio::{self, fs as tfs, runtime};
+use tokio::{self, fs as tfs, runtime, sync as tsync};
 use tokio_util::codec::{BytesCodec, FramedRead};
 
 pub struct Task {
     arg: Arg,
     client: Client,
-    dispatcher: Box<dyn Dispatcher>,
+    dispatcher_lock: Arc<tsync::RwLock<dyn Dispatcher>>,
 }
 
 impl Task {
     pub fn new(arg: Arg) -> anyhow::Result<Self> {
         let client = build_client(&arg)?;
-        let dispatcher =
-            Box::new(CountDispatcher::new(arg.requests.unwrap(), &arg.rate));
+        let dispatcher = Arc::new(tsync::RwLock::new(CountDispatcher::new(
+            arg.requests.unwrap(),
+            &arg.rate,
+        )));
         Ok(Self {
             arg,
             client,
-            dispatcher,
+            dispatcher_lock: dispatcher,
         })
     }
 
     async fn worker(self: Arc<Self>) {
         loop {
-            if !self.dispatcher.try_apply_job().await {
+            if !self.dispatcher_lock.read().await.try_apply_job().await {
                 break;
             }
 
@@ -43,6 +45,10 @@ impl Task {
             }
 
             let response = self.client.execute(request.unwrap()).await;
+            {
+                let mut dispatcher = self.dispatcher_lock.write().await;
+                dispatcher.complete_job();
+            }
             if response.is_err() {
                 error!("execute request failed: {:?}", response.err());
             } else {
