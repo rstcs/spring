@@ -9,11 +9,17 @@ description = "A http server benchmark tool, written in rust."
 
 [dependencies]
 anyhow = {version = "1.0.69", features = ["backtrace", "std"]}
+bytes = "1.4.0"
 clap = { version = "4.1.8", features = ["derive", "cargo", "help", "string"] }
 clap_complete = "4.1.4"
 env_logger = "0.10.0"
 log = "0.4.17"
-reqwest = {version = "0.11.14", features = ["default-tls", "native-tls"]}
+mime_guess = "2.0.4"
+reqwest = {version = "0.11.14", features = ["default-tls", "native-tls", "stream", "json", "multipart"]}
+tokio = {version = "1.26.0", features = ["time", "rt"]}
+tokio-util = {version = "0.7.7", features = ["codec"]}
+governor = "0.5.1"
+async-trait = "0.1.66"
 
 [[bin]]
 name = "springd"
