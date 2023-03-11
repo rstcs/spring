@@ -1,17 +1,17 @@
-use crate::task::dispatcher::{CountDispatcher, Dispatcher};
-use crate::Arg;
+use crate::{
+    dispatcher::{CountDispatcher, Dispatcher},
+    Arg,
+};
 use bytes::Bytes;
 use log::{debug, error};
+use num_cpus;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     multipart, Body, Client, Request, RequestBuilder,
 };
-use std::collections::HashMap;
-use tokio::{self, fs as tfs};
+use std::{collections::HashMap, fs as sfs, sync::Arc};
+use tokio::{self, fs as tfs, runtime};
 use tokio_util::codec::{BytesCodec, FramedRead};
-
-pub mod dispatcher;
-pub mod limiter;
 
 pub struct Task {
     arg: Arg,
@@ -20,8 +20,8 @@ pub struct Task {
 }
 
 impl Task {
-    pub async fn new(arg: Arg) -> anyhow::Result<Self> {
-        let client = build_client(&arg).await?;
+    pub fn new(arg: Arg) -> anyhow::Result<Self> {
+        let client = build_client(&arg)?;
         let dispatcher =
             Box::new(CountDispatcher::new(arg.requests.unwrap(), &arg.rate));
         Ok(Self {
@@ -31,7 +31,7 @@ impl Task {
         })
     }
 
-    async fn worker(&self) {
+    async fn worker(self: Arc<Self>) {
         loop {
             if !self.dispatcher.try_apply_job().await {
                 break;
@@ -47,7 +47,7 @@ impl Task {
                 error!("execute request failed: {:?}", response.err());
             } else {
                 let response = response.unwrap();
-                debug!(
+                error!(
                     "execute request succeeded, status: {:?}, headers: {:?}",
                     response.status(),
                     response.headers()
@@ -56,16 +56,35 @@ impl Task {
         }
     }
 
-    pub fn run(&self) -> anyhow::Result<()> {
-        let mut tasks = Vec::with_capacity(self.arg.connections as usize);
-        for _ in 0..self.arg.connections {
-            tasks.push(tokio::spawn((&self).worker()));
-        }
+    pub fn run(self: Arc<Self>) -> anyhow::Result<()> {
+        let rt = runtime::Builder::new_multi_thread()
+            .worker_threads(num_cpus::get())
+            .thread_name("springd-tokio-runtime-worker")
+            .unhandled_panic(runtime::UnhandledPanic::ShutdownRuntime)
+            .enable_all()
+            .build()?;
+
+        rt.block_on(async {
+            let mut workers = Vec::with_capacity(self.arg.connections as usize);
+            for _ in 0..self.arg.connections {
+                workers.push(tokio::spawn(self.clone().worker()));
+            }
+            for worker in workers {
+                let result = worker.await;
+                if result.is_err() {
+                    error!(
+                        "worker execute request failed: {:?}",
+                        result.unwrap_err()
+                    );
+                }
+            }
+        });
+
         Ok(())
     }
 }
 
-async fn build_client(arg: &Arg) -> anyhow::Result<Client> {
+fn build_client(arg: &Arg) -> anyhow::Result<Client> {
     let mut builder = Client::builder();
 
     // build headers
@@ -95,8 +114,8 @@ async fn build_client(arg: &Arg) -> anyhow::Result<Client> {
     // use client certificates
     if let Some(cert) = &arg.cert {
         if let Some(key) = &arg.key {
-            let cert = tfs::read(cert).await?;
-            let key = tfs::read(key).await?;
+            let cert = sfs::read(cert)?;
+            let key = sfs::read(key)?;
             let pkcs8 = reqwest::Identity::from_pkcs8_pem(&cert, &key)?;
             builder = builder.identity(pkcs8);
         }

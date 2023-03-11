@@ -2755,6 +2755,7 @@ dependencies = [
  "governor",
  "log",
  "mime_guess",
+ "num_cpus",
  "reqwest",
  "tokio",
  "tokio-util",

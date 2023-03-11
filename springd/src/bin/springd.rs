@@ -1,8 +1,10 @@
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use log::debug;
+use log::{debug, error, info};
+use springd::task::Task;
 use springd::Arg;
 use std::io;
+use std::sync::Arc;
 
 fn main() {
     env_logger::init();
@@ -15,7 +17,9 @@ fn main() {
         std::process::exit(0);
     }
 
-    let cmd = Arg::command();
-
-    debug!("output {:#?}, {}", arg, cmd.get_color());
+    let task =
+        Task::new(arg).expect("programing exception, create task failed");
+    let task = Arc::new(task);
+    let result = task.clone().run();
+    info!("process run success: {}", result.is_ok());
 }

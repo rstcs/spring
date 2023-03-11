@@ -3,6 +3,7 @@
 #![allow(dead_code, unused_mut)]
 
 pub mod arg;
+pub mod dispatcher;
 pub mod task;
 
 pub use self::arg::Arg;

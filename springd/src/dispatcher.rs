@@ -6,6 +6,7 @@ use governor::{
     state::{direct::NotKeyed, InMemoryState},
     Quota, RateLimiter,
 };
+use log::{debug, error, info};
 use std::num::NonZeroU32;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::*};
 use tokio::time;
@@ -86,6 +87,8 @@ impl Dispatcher for CountDispatcher {
             if previous >= self.total {
                 return false;
             }
+        } else {
+            return false;
         }
 
         // if set the maximum rate, need to check whether it is currently
