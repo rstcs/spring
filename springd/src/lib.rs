@@ -9,5 +9,4 @@ pub mod statistics;
 pub mod task;
 
 pub use self::arg::Arg;
-pub use self::statistics::Statistics;
 pub use self::task::Task;

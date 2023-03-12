@@ -2,7 +2,6 @@
 
 use crate::limiter::Limiter;
 use async_trait::async_trait;
-use log::{debug, error, info};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::*};
 use std::time::{Duration, Instant};
 

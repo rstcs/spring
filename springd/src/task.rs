@@ -5,7 +5,7 @@ use crate::{
     Arg,
 };
 use bytes::Bytes;
-use log::{debug, error};
+use log::error;
 use num_cpus;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
@@ -13,6 +13,7 @@ use reqwest::{
     redirect::Policy,
     Body, Client, Request, RequestBuilder,
 };
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::{
     collections::HashMap,
     fs as sfs,
@@ -29,6 +30,7 @@ pub struct Task {
     arg: Arg,
     client: Client,
     statistics: Statistics,
+    workers_done: AtomicBool,
     dispatcher_lock: Arc<tsync::RwLock<Box<dyn Dispatcher>>>,
 }
 
@@ -67,6 +69,7 @@ impl Task {
             arg,
             client,
             statistics: Statistics::new(),
+            workers_done: AtomicBool::new(false),
             dispatcher_lock: dispatcher,
         })
     }
@@ -94,11 +97,20 @@ impl Task {
         self: Arc<Self>,
         mut receiver: mpsc::Receiver<Message>,
     ) {
-        while let Some(message) = receiver.recv().await {
-            self.statistics.handle_message(message).await;
+        loop {
+            let result = receiver.try_recv();
+            if result.is_ok() {
+                self.statistics.handle_message(result.unwrap()).await;
+                continue;
+            }
+            if self.workers_done.load(Ordering::Acquire) {
+                break;
+            }
+            tokio::time::sleep(Duration::from_nanos(10)).await;
         }
     }
 
+    /// run task and make statistics
     pub fn run(self: Arc<Self>) -> anyhow::Result<()> {
         let rt = runtime::Builder::new_multi_thread()
             .worker_threads(num_cpus::get())
@@ -108,26 +120,35 @@ impl Task {
             .build()?;
 
         rt.block_on(async {
-            let (tx, mut rx) = mpsc::channel::<Message>(32);
+            let (tx, mut rx) = mpsc::channel::<Message>(500);
 
             // start workers by connection number
-            let mut tasks = Vec::with_capacity(self.arg.connections as usize);
+            let mut jobs = Vec::with_capacity(self.arg.connections as usize);
+
+            // reset start time
+            let task_copy = self.clone();
+            tokio::spawn(async move {
+                task_copy.statistics.reset_start_time().await;
+            })
+            .await
+            .expect("reset statistics start time failed");
 
             // handle statistics
-            tasks.push(tokio::spawn(self.clone().statistics(rx)));
+            let statistics_job = tokio::spawn(self.clone().statistics(rx));
+
+            // start all worker and send request
+            for _ in 0..self.arg.connections {
+                jobs.push(tokio::spawn(self.clone().worker(tx.clone())));
+            }
 
             // start statistics timer
             let task_copy = self.clone();
             let stat_timer = tokio::spawn(async move {
-                task_copy.statistics.tick_per_second().await;
+                task_copy.statistics.timer_per_second().await;
             });
 
-            for _ in 0..self.arg.connections {
-                tasks.push(tokio::spawn(self.clone().worker(tx.clone())));
-            }
-
-            // wait all tasks end
-            for worker in tasks {
+            // wait all jobs end
+            for worker in jobs {
                 let result = worker.await;
                 if result.is_err() {
                     error!(
@@ -136,23 +157,31 @@ impl Task {
                     );
                 }
             }
+            self.workers_done.store(true, Ordering::SeqCst);
 
             // notify stop statics timer
             let task_copy = self.clone();
-            let _ = tokio::spawn(async move {
-                task_copy.statistics.stop_tick().await;
+            tokio::spawn(async move {
+                task_copy.statistics.stop_timer().await;
             })
-            .await;
+            .await
+            .expect("notify stop statistics timer failed");
+
+            // wait statistics job complete
+            statistics_job.await.expect("statistics job failed");
 
             // wait statistics timer end
-            let _ = stat_timer.await;
+            stat_timer.await.expect("statistics timer tun failed");
 
             // wait statistics summary
             let task_copy = self.clone();
-            let _ = tokio::spawn(async move {
+            tokio::spawn(async move {
                 task_copy.statistics.summary().await;
             })
-            .await;
+            .await
+            .expect("statistics summary failed");
+
+            error!("{:#?}", self.statistics);
         });
 
         Ok(())

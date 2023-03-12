@@ -3,7 +3,6 @@ use governor::{
     state::{direct::NotKeyed, InMemoryState},
     Quota, RateLimiter,
 };
-use log::{debug, error, info};
 use std::num::NonZeroU32;
 use tokio::time;
 

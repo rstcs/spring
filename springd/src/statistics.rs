@@ -6,32 +6,67 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::*};
 use std::time::{Duration, Instant};
 use tokio::{sync as tsync, time as ttime};
 
-pub struct Statistics {
+#[derive(Debug)]
+pub(crate) struct Statistics {
+    /// status code [100, 200)
     rsp1xx: AtomicU64,
+
+    /// status code [200, 300)
     rsp2xx: AtomicU64,
+
+    /// status code [300, 400)
     rsp3xx: AtomicU64,
+
+    /// status code [400, 500)
     rsp4xx: AtomicU64,
+
+    /// status code [500, 511]
     rsp5xx: AtomicU64,
+
+    /// other response code
     rsp_others: AtomicU64,
+
+    /// errors category
     errors: tsync::Mutex<HashMap<String, u64>>,
 
-    start: Instant,
+    /// start time
+    started_at: tsync::Mutex<Instant>,
+
+    /// total send and receive response requests
     total: AtomicU64,
-    max_per_second: tsync::Mutex<f64>,
-    avg_per_second: tsync::Mutex<f64>,
+
+    /// maximum per second
+    max_req_per_second: tsync::Mutex<f64>,
+
+    /// average per second
+    avg_req_per_second: tsync::Mutex<f64>,
+
+    /// log requests by second
     req_per_second: tsync::Mutex<Vec<u64>>,
+
+    /// used for internal statistics, the number of requests accumulated in the
+    /// current second will be reset when the next second starts
     current_cumulative: AtomicU64,
 
-    min_elapsed_time: tsync::Mutex<Duration>,
-    max_elapsed_time: tsync::Mutex<Duration>,
+    /// average time spent on request
+    avg_req_elapsed_time: tsync::Mutex<Duration>,
+
+    /// maximum time spent by the request
+    max_req_elapsed_time: tsync::Mutex<Duration>,
+
+    /// used internally to record the time spent on each request
     elapsed_time: tsync::Mutex<Vec<Duration>>,
 
+    /// indicates whether to stop, used to notify the internal timer to exit
     is_stopped: AtomicBool,
+
+    /// recording stop time
     stopped_at: tsync::Mutex<Option<Instant>>,
 }
 
 impl Statistics {
-    pub fn new() -> Statistics {
+    /// construct empty Statistics
+    pub(crate) fn new() -> Statistics {
         Self {
             rsp1xx: AtomicU64::new(0),
             rsp2xx: AtomicU64::new(0),
@@ -40,27 +75,36 @@ impl Statistics {
             rsp5xx: AtomicU64::new(0),
             rsp_others: AtomicU64::new(0),
             errors: tsync::Mutex::new(HashMap::new()),
-            start: Instant::now(),
+            started_at: tsync::Mutex::new(Instant::now()),
             total: AtomicU64::new(0),
             req_per_second: tsync::Mutex::new(Vec::new()),
-            avg_per_second: tsync::Mutex::new(0.0),
-            max_per_second: tsync::Mutex::new(0.0),
+            avg_req_per_second: tsync::Mutex::new(0.0),
+            max_req_per_second: tsync::Mutex::new(0.0),
             is_stopped: AtomicBool::new(false),
             current_cumulative: AtomicU64::new(0),
             stopped_at: tsync::Mutex::new(None),
             elapsed_time: tsync::Mutex::new(Vec::new()),
-            min_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
-            max_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
+            avg_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
+            max_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
         }
     }
 
-    pub async fn tick_per_second(&self) {
+    /// if there will be a lot of preparation work before starting the
+    /// statistics, it is best to reset the start time at the official start
+    pub(crate) async fn reset_start_time(&self) {
+        let mut started_at = self.started_at.lock().await;
+        *started_at = Instant::now();
+    }
+
+    /// used to start the internal timer, and generate a box of snapshots for
+    /// some data every second
+    pub(crate) async fn timer_per_second(&self) {
         let mut timer = ttime::interval(Duration::from_secs(2));
         loop {
             timer.tick().await;
             {
                 let mut req_per_second = self.req_per_second.lock().await;
-                req_per_second.push(self.current_cumulative.load(SeqCst));
+                req_per_second.push(self.current_cumulative.load(Acquire));
                 self.current_cumulative.store(0, SeqCst);
             }
             if self.is_stopped.load(Acquire) {
@@ -120,7 +164,8 @@ impl Statistics {
         }
     }
 
-    pub async fn handle_message(&self, message: Message) {
+    /// receive message and make statistics
+    pub(crate) async fn handle_message(&self, message: Message) {
         let Message {
             rsp_at,
             req_at,
@@ -141,7 +186,8 @@ impl Statistics {
         elapsed_time.push(rsp_at - req_at);
     }
 
-    pub async fn stop_tick(&self) {
+    /// notify stop timer
+    pub(crate) async fn stop_timer(&self) {
         self.is_stopped.store(true, SeqCst);
         let mut stopped_at = self.stopped_at.lock().await;
         *stopped_at = Some(Instant::now());
@@ -150,19 +196,20 @@ impl Statistics {
     async fn calculate_max_per_second(&self) {
         let req_per_second = self.req_per_second.lock().await;
         if let Some(max) = req_per_second.iter().max() {
-            let mut max_per_second = self.max_per_second.lock().await;
+            let mut max_per_second = self.max_req_per_second.lock().await;
             *max_per_second = *max as f64;
         }
     }
 
     async fn calculate_avg_per_second(&self) {
-        let mut stopped_at = self.stopped_at.lock().await;
+        let stopped_at = self.stopped_at.lock().await;
+        let started_at = self.started_at.lock().await;
         if let Some(stopped_at) = *stopped_at {
-            let delta = (stopped_at - self.start).as_secs_f64();
+            let delta = (stopped_at - *started_at).as_secs_f64();
             if delta == 0.0 {
                 return;
             }
-            let mut avg_per_second = self.avg_per_second.lock().await;
+            let mut avg_per_second = self.avg_req_per_second.lock().await;
             *avg_per_second = self.total.load(SeqCst) as f64 / delta;
         }
     }
@@ -171,13 +218,15 @@ impl Statistics {
         let mut elapsed_time = self.elapsed_time.lock().await;
         elapsed_time.sort();
 
-        let mut min_elapsed_time = self.min_elapsed_time.lock().await;
-        if let Some(min) = elapsed_time.iter().min() {
-            *min_elapsed_time = *min;
+        let mut avg_req_elapsed_time = self.avg_req_elapsed_time.lock().await;
+        if !elapsed_time.is_empty() {
+            let total: Duration = elapsed_time.iter().sum();
+            let length = elapsed_time.len();
+            *avg_req_elapsed_time = total / length as u32;
         }
 
-        let mut max_elapsed_time = self.max_elapsed_time.lock().await;
-        if let Some(max) = elapsed_time.iter().min() {
+        let mut max_elapsed_time = self.max_req_elapsed_time.lock().await;
+        if let Some(max) = elapsed_time.iter().max() {
             *max_elapsed_time = *max;
         }
 
@@ -186,7 +235,8 @@ impl Statistics {
         elapsed_time.shrink_to(0);
     }
 
-    pub async fn summary(&self) {
+    /// need to manually call this method for statistical summary
+    pub(crate) async fn summary(&self) {
         self.calculate_max_per_second().await;
         self.calculate_avg_per_second().await;
         self.calculate_elapsed_time().await;
@@ -199,6 +249,7 @@ impl Default for Statistics {
     }
 }
 
+/// Message entity for [Statistics]
 pub struct Message {
     rsp_at: Instant,
     req_at: Instant,
@@ -206,6 +257,7 @@ pub struct Message {
 }
 
 impl Message {
+    /// construct message
     pub fn new(
         response: Result<Response, Error>,
         req_at: Instant,
