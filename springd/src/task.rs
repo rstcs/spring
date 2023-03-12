@@ -1,3 +1,4 @@
+use crate::dispatcher::DurationDispatcher;
 use crate::{
     dispatcher::{CountDispatcher, Dispatcher},
     Arg,
@@ -9,23 +10,47 @@ use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     multipart, Body, Client, Request, RequestBuilder,
 };
-use std::{collections::HashMap, fs as sfs, sync::Arc};
+use std::{collections::HashMap, fs as sfs, sync::Arc, time::Duration};
 use tokio::{self, fs as tfs, runtime, sync as tsync};
 use tokio_util::codec::{BytesCodec, FramedRead};
 
 pub struct Task {
     arg: Arg,
     client: Client,
-    dispatcher_lock: Arc<tsync::RwLock<dyn Dispatcher>>,
+    dispatcher_lock: Arc<tsync::RwLock<Box<dyn Dispatcher>>>,
+}
+
+fn create_count_dispatcher(
+    total: u64,
+    rate: &Option<u16>,
+) -> Box<dyn Dispatcher> {
+    let count_dispatcher = CountDispatcher::new(total, rate);
+    Box::new(count_dispatcher)
+}
+
+fn create_duration_dispatcher(
+    duration: Duration,
+    rate: &Option<u16>,
+) -> Box<dyn Dispatcher> {
+    let duration_dispatcher = DurationDispatcher::new(duration, rate);
+    Box::new(duration_dispatcher)
 }
 
 impl Task {
     pub fn new(arg: Arg) -> anyhow::Result<Self> {
         let client = build_client(&arg)?;
-        let dispatcher = Arc::new(tsync::RwLock::new(CountDispatcher::new(
-            arg.requests.unwrap(),
-            &arg.rate,
-        )));
+        let dispatcher = if arg.requests.is_some() {
+            Arc::new(tsync::RwLock::new(create_count_dispatcher(
+                arg.requests.unwrap(),
+                &arg.rate,
+            )))
+        } else {
+            Arc::new(tsync::RwLock::new(create_duration_dispatcher(
+                arg.duration.unwrap(),
+                &arg.rate,
+            )))
+        };
+
         Ok(Self {
             arg,
             client,
@@ -45,10 +70,7 @@ impl Task {
             }
 
             let response = self.client.execute(request.unwrap()).await;
-            {
-                let mut dispatcher = self.dispatcher_lock.write().await;
-                dispatcher.complete_job();
-            }
+            self.dispatcher_lock.read().await.complete_job();
             if response.is_err() {
                 error!("execute request failed: {:?}", response.err());
             } else {
