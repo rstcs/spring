@@ -1,7 +1,6 @@
 use clap::{CommandFactory, Parser};
 use clap_complete::generate;
-use springd::task::Task;
-use springd::Arg;
+use springd::{Arg, Statistics, Task};
 use std::io;
 use std::sync::Arc;
 

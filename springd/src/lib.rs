@@ -5,6 +5,9 @@
 pub mod arg;
 pub mod dispatcher;
 pub mod limiter;
+pub mod statistics;
 pub mod task;
 
 pub use self::arg::Arg;
+pub use self::statistics::Statistics;
+pub use self::task::Task;

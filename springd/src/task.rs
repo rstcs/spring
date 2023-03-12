@@ -1,4 +1,5 @@
 use crate::dispatcher::DurationDispatcher;
+use crate::statistics::{Message, Statistics};
 use crate::{
     dispatcher::{CountDispatcher, Dispatcher},
     Arg,
@@ -8,15 +9,26 @@ use log::{debug, error};
 use num_cpus;
 use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
-    multipart, Body, Client, Request, RequestBuilder,
+    multipart,
+    redirect::Policy,
+    Body, Client, Request, RequestBuilder,
 };
-use std::{collections::HashMap, fs as sfs, sync::Arc, time::Duration};
-use tokio::{self, fs as tfs, runtime, sync as tsync};
+use std::{
+    collections::HashMap,
+    fs as sfs,
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tokio::{
+    self, fs as tfs, runtime,
+    sync::{self as tsync, mpsc},
+};
 use tokio_util::codec::{BytesCodec, FramedRead};
 
 pub struct Task {
     arg: Arg,
     client: Client,
+    statistics: Statistics,
     dispatcher_lock: Arc<tsync::RwLock<Box<dyn Dispatcher>>>,
 }
 
@@ -54,11 +66,12 @@ impl Task {
         Ok(Self {
             arg,
             client,
+            statistics: Statistics::new(),
             dispatcher_lock: dispatcher,
         })
     }
 
-    async fn worker(self: Arc<Self>) {
+    async fn worker(self: Arc<Self>, sender: mpsc::Sender<Message>) {
         loop {
             if !self.dispatcher_lock.read().await.try_apply_job().await {
                 break;
@@ -69,18 +82,20 @@ impl Task {
                 panic!("unknown fatal error: {:?}", request.err());
             }
 
+            let req_at = Instant::now();
             let response = self.client.execute(request.unwrap()).await;
             self.dispatcher_lock.read().await.complete_job();
-            if response.is_err() {
-                error!("execute request failed: {:?}", response.err());
-            } else {
-                let response = response.unwrap();
-                error!(
-                    "execute request succeeded, status: {:?}, headers: {:?}",
-                    response.status(),
-                    response.headers()
-                );
-            }
+            let message = Message::new(response, req_at, Instant::now());
+            let _ = sender.send(message).await;
+        }
+    }
+
+    async fn statistics(
+        self: Arc<Self>,
+        mut receiver: mpsc::Receiver<Message>,
+    ) {
+        while let Some(message) = receiver.recv().await {
+            self.statistics.handle_message(message).await;
         }
     }
 
@@ -93,11 +108,26 @@ impl Task {
             .build()?;
 
         rt.block_on(async {
-            let mut workers = Vec::with_capacity(self.arg.connections as usize);
+            let (tx, mut rx) = mpsc::channel::<Message>(32);
+
+            // start workers by connection number
+            let mut tasks = Vec::with_capacity(self.arg.connections as usize);
+
+            // handle statistics
+            tasks.push(tokio::spawn(self.clone().statistics(rx)));
+
+            // start statistics timer
+            let task_copy = self.clone();
+            let stat_timer = tokio::spawn(async move {
+                task_copy.statistics.tick_per_second().await;
+            });
+
             for _ in 0..self.arg.connections {
-                workers.push(tokio::spawn(self.clone().worker()));
+                tasks.push(tokio::spawn(self.clone().worker(tx.clone())));
             }
-            for worker in workers {
+
+            // wait all tasks end
+            for worker in tasks {
                 let result = worker.await;
                 if result.is_err() {
                     error!(
@@ -106,6 +136,23 @@ impl Task {
                     );
                 }
             }
+
+            // notify stop statics timer
+            let task_copy = self.clone();
+            let _ = tokio::spawn(async move {
+                task_copy.statistics.stop_tick().await;
+            })
+            .await;
+
+            // wait statistics timer end
+            let _ = stat_timer.await;
+
+            // wait statistics summary
+            let task_copy = self.clone();
+            let _ = tokio::spawn(async move {
+                task_copy.statistics.summary().await;
+            })
+            .await;
         });
 
         Ok(())
@@ -148,6 +195,9 @@ fn build_client(arg: &Arg) -> anyhow::Result<Client> {
             builder = builder.identity(pkcs8);
         }
     }
+
+    // forbidden redirect
+    builder = builder.redirect(Policy::none());
 
     match builder.build() {
         Ok(client) => Ok(client),
