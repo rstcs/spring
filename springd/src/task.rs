@@ -82,7 +82,7 @@ impl Task {
 
             let request = build_request(&self.arg, &self.client).await;
             if request.is_err() {
-                panic!("unknown fatal error: {:?}", request.err());
+                panic!("build request error: {:?}", request.err());
             }
 
             let req_at = Instant::now();
@@ -178,7 +178,10 @@ impl Task {
             tokio::spawn(async move {
                 task_copy
                     .statistics
-                    .summary(task_copy.arg.connections)
+                    .summary(
+                        task_copy.arg.connections,
+                        task_copy.arg.percentiles.clone(),
+                    )
                     .await;
             })
             .await

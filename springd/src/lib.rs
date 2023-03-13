@@ -1,3 +1,4 @@
+#![feature(is_sorted)]
 //! springd is a http server benchmark tool.
 #![cfg_attr(feature = "cargo-clippy", allow(clippy::single_char_pattern))]
 #![allow(dead_code, unused_mut)]

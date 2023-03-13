@@ -29,6 +29,14 @@ fn parse_duration(arg: &str) -> Result<Duration, std::num::ParseIntError> {
     Ok(Duration::from_secs(seconds))
 }
 
+fn parse_percentiles(arg: &str) -> anyhow::Result<f32> {
+    let value = arg.parse::<f32>()?;
+    if value <= 0f32 || value >= 1f32 {
+        anyhow::bail!("{} must be limited to the range (0 to 1)", value);
+    }
+    Ok(value)
+}
+
 /// define supported http methods
 #[derive(Debug, Clone, Copy, Eq, Hash, PartialEq)]
 pub enum Method {
@@ -128,6 +136,17 @@ pub struct Arg {
     /// Print latency statistics
     #[arg(long, short, help = "Print latency statistics")]
     pub(crate) latencies: bool,
+
+    /// custom latency percentiles
+    #[arg(
+        long,
+        num_args = 0..,
+        value_parser = parse_percentiles,
+        value_delimiter = ',',
+        default_value = "0.5,0.75,0.9,0.99",
+        help = "Custom latency percentiles"
+    )]
+    pub(crate) percentiles: Vec<f32>,
 
     /// Request method
     #[arg(
@@ -682,5 +701,58 @@ mod tests {
             .unwrap()
             .collect::<Vec<_>>();
         assert_eq!(headers, ["k1:v1", "k2:v2", "k3:v3"]);
+    }
+
+    #[test]
+    fn test_parse_percentiles_params() {
+        let mut cmd = Arg::command();
+
+        // default percentiles
+        let mut args = vec!["springd", "-n", "20", URI];
+        let result = cmd.try_get_matches_from_mut(args);
+        assert!(result.as_ref().is_ok());
+        let percentiles = result
+            .as_ref()
+            .unwrap()
+            .get_many::<f32>("percentiles")
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(format!("{percentiles:?}"), "[0.5, 0.75, 0.9, 0.99]");
+
+        // custom percentiles
+        let mut args = vec![
+            "springd",
+            "-n",
+            "20",
+            "--percentiles=0.60,0.80,0.90,0.95",
+            URI,
+        ];
+        let result = cmd.try_get_matches_from_mut(args);
+        assert!(result.as_ref().is_ok());
+        let percentiles = result
+            .as_ref()
+            .unwrap()
+            .get_many::<f32>("percentiles")
+            .unwrap()
+            .collect::<Vec<_>>();
+        assert_eq!(format!("{percentiles:?}"), "[0.6, 0.8, 0.9, 0.95]");
+
+        // given wrong percent, negative
+        let mut args = vec!["springd", "-n", "20", "--percentiles=-0.1", URI];
+        let result = cmd.try_get_matches_from_mut(args);
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("-0.1 must be limited to the range (0 to 1)"));
+
+        // give wrong percent, that's gte 1
+        let mut args = vec!["springd", "-n", "20", "--percentiles=1", URI];
+        let result = cmd.try_get_matches_from_mut(args);
+        assert!(result
+            .err()
+            .unwrap()
+            .to_string()
+            .contains("1 must be limited to the range (0 to 1)"));
     }
 }

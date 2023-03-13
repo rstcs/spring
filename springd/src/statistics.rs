@@ -72,6 +72,9 @@ pub(crate) struct Statistics {
 
     /// throughput, connections / avg_req_elapsed_time, reqs/s
     throughput: tsync::Mutex<f64>,
+
+    /// latencies for different percentiles
+    latencies: tsync::Mutex<Vec<(f32, Duration)>>,
 }
 
 impl Statistics {
@@ -94,6 +97,7 @@ impl Statistics {
             is_stopped: AtomicBool::new(false),
             current_cumulative: AtomicU64::new(0),
             stopped_at: tsync::Mutex::new(None),
+            latencies: tsync::Mutex::new(Vec::new()),
             throughput: tsync::Mutex::new(0.0),
             elapsed_time: tsync::Mutex::new(Vec::new()),
             avg_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
@@ -261,10 +265,6 @@ impl Statistics {
         let mut stdev_req_elapsed_time =
             self.stdev_req_elapsed_time.lock().await;
         *stdev_req_elapsed_time = Duration::from_nanos(stdev as u64);
-
-        // clear after using
-        elapsed_time.clear();
-        elapsed_time.shrink_to(0);
     }
 
     async fn calculate_stdev_per_second(&self) {
@@ -305,13 +305,48 @@ impl Statistics {
         *throughput = connections as f64 / sec;
     }
 
+    async fn calculate_latencies(&self, percentiles: Vec<f32>) {
+        let mut elapsed_time = self.elapsed_time.lock().await;
+        if elapsed_time.is_empty() {
+            return;
+        }
+        if !elapsed_time.is_sorted() {
+            elapsed_time.sort();
+        }
+
+        let mut latencies = self.latencies.lock().await;
+        let count = elapsed_time.len();
+        for percent in percentiles {
+            let percent_len = (count as f32 * percent) as usize;
+            if percent_len > count {
+                continue;
+            }
+            let percent_elapsed_time: &[Duration] =
+                &(*elapsed_time)[..percent_len];
+            let sum = percent_elapsed_time.iter().sum::<Duration>();
+            latencies.push((percent, sum / percent_len as u32));
+        }
+    }
+
+    async fn clear_temporary_data(&self) {
+        let mut elapsed_time = self.elapsed_time.lock().await;
+        elapsed_time.clear();
+        elapsed_time.shrink_to(0);
+    }
+
     /// need to manually call this method for statistical summary
-    pub(crate) async fn summary(&self, connections: u16) {
+    pub(crate) async fn summary(
+        &self,
+        connections: u16,
+        percentiles: Vec<f32>,
+    ) {
         self.calculate_max_per_second().await;
         self.calculate_avg_per_second().await;
         self.calculate_elapsed_time().await;
         self.calculate_stdev_per_second().await;
         self.calculate_throughput(connections).await;
+        self.calculate_latencies(percentiles).await;
+        self.clear_temporary_data().await;
     }
 }
 
