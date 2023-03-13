@@ -7,7 +7,7 @@ use std::num::NonZeroU32;
 use tokio::time;
 
 /// Limiter limit only sending a fixed number of requests per second
-pub struct Limiter {
+pub(crate) struct Limiter {
     inner: RateLimiter<NotKeyed, InMemoryState, DefaultClock>,
 }
 
@@ -23,7 +23,7 @@ impl Limiter {
 
     /// allow function return means that the next action can be performed,
     /// otherwise wait here
-    pub async fn allow(&self) {
+    pub(crate) async fn allow(&self) {
         loop {
             let result = self.inner.check();
             if result.is_ok() {

@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::*};
 use std::time::{Duration, Instant};
 
 #[async_trait]
-pub trait Dispatcher: Send + Sync {
+pub(crate) trait Dispatcher: Send + Sync {
     /// query current task process, returning 0 to 1
     fn get_process(&self) -> f64;
 
@@ -23,7 +23,7 @@ pub trait Dispatcher: Send + Sync {
 }
 
 /// [CountDispatcher] is a count based task dispatcher
-pub struct CountDispatcher {
+pub(crate) struct CountDispatcher {
     /// total requests number will send to server
     total: u64,
 
@@ -54,7 +54,7 @@ fn new_limiter(rate: &Option<u16>) -> Option<Limiter> {
 
 impl CountDispatcher {
     /// give total and rat, return [CountDispatcher]
-    pub fn new(total: u64, rate: &Option<u16>) -> Self {
+    pub(crate) fn new(total: u64, rate: &Option<u16>) -> Self {
         Self {
             total,
             limiter: new_limiter(rate),
@@ -116,7 +116,7 @@ impl Dispatcher for CountDispatcher {
 }
 
 /// [DurationDispatcher] is a duration-based task dispatcher
-pub struct DurationDispatcher {
+pub(crate) struct DurationDispatcher {
     /// the number of requests executed
     total: AtomicU64,
 

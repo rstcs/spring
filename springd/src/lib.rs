@@ -4,9 +4,11 @@
 #![allow(dead_code, unused_mut)]
 
 pub mod arg;
-pub mod dispatcher;
-pub mod limiter;
-pub mod statistics;
+pub(crate) mod client;
+pub(crate) mod dispatcher;
+pub(crate) mod limiter;
+pub(crate) mod request;
+pub(crate) mod statistics;
 pub mod task;
 
 pub use self::arg::Arg;
