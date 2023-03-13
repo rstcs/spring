@@ -1,5 +1,7 @@
 //! mod statistics counts all relevant information about the server response
 
+use log::error;
+use num::integer::Roots;
 use reqwest::{Error, Response, StatusCode};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::*};
@@ -41,6 +43,9 @@ pub(crate) struct Statistics {
     /// average per second
     avg_req_per_second: tsync::Mutex<f64>,
 
+    /// stdev per second, link: https://en.wikipedia.org/wiki/Standard_deviation
+    stdev_per_second: tsync::Mutex<f64>,
+
     /// log requests by second
     req_per_second: tsync::Mutex<Vec<u64>>,
 
@@ -53,6 +58,9 @@ pub(crate) struct Statistics {
 
     /// maximum time spent by the request
     max_req_elapsed_time: tsync::Mutex<Duration>,
+
+    /// stdev per request, link: https://en.wikipedia.org/wiki/Standard_deviation
+    stdev_req_elapsed_time: tsync::Mutex<Duration>,
 
     /// used internally to record the time spent on each request
     elapsed_time: tsync::Mutex<Vec<Duration>>,
@@ -80,12 +88,14 @@ impl Statistics {
             req_per_second: tsync::Mutex::new(Vec::new()),
             avg_req_per_second: tsync::Mutex::new(0.0),
             max_req_per_second: tsync::Mutex::new(0.0),
+            stdev_per_second: tsync::Mutex::new(0.0),
             is_stopped: AtomicBool::new(false),
             current_cumulative: AtomicU64::new(0),
             stopped_at: tsync::Mutex::new(None),
             elapsed_time: tsync::Mutex::new(Vec::new()),
             avg_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
             max_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
+            stdev_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
         }
     }
 
@@ -153,7 +163,7 @@ impl Statistics {
     }
 
     async fn handle_resp_error(&self, err: Error) {
-        let err_msg = format!("{}", err);
+        let err_msg = format!("{err}");
         let mut errors = self.errors.lock().await;
         errors
             .entry(err_msg)
@@ -216,23 +226,73 @@ impl Statistics {
 
     async fn calculate_elapsed_time(&self) {
         let mut elapsed_time = self.elapsed_time.lock().await;
+        if (*elapsed_time).is_empty() {
+            return;
+        }
         elapsed_time.sort();
 
+        // avg_req_elapsed_time
         let mut avg_req_elapsed_time = self.avg_req_elapsed_time.lock().await;
-        if !elapsed_time.is_empty() {
-            let total: Duration = elapsed_time.iter().sum();
-            let length = elapsed_time.len();
-            *avg_req_elapsed_time = total / length as u32;
+        let total: Duration = elapsed_time.iter().sum();
+        let count = elapsed_time.len();
+        *avg_req_elapsed_time = total / count as u32;
+
+        // max_req_elapsed_time
+        let mut max_req_elapsed_time = self.max_req_elapsed_time.lock().await;
+        if let Some(max) = elapsed_time.iter().max() {
+            *max_req_elapsed_time = *max;
         }
 
-        let mut max_elapsed_time = self.max_req_elapsed_time.lock().await;
-        if let Some(max) = elapsed_time.iter().max() {
-            *max_elapsed_time = *max;
-        }
+        // stdev_req_elapsed_time
+        let sum = (*elapsed_time).iter().sum::<Duration>();
+        let mean = (sum as Duration / count as u32).as_nanos();
+        let variance: u128 = (*elapsed_time)
+            .iter()
+            .map(|x| {
+                let diff: i128 = (*x).as_nanos() as i128 - mean as i128;
+                (diff * diff) as u128
+            })
+            .sum::<u128>()
+            / count as u128;
+        let stdev = variance.sqrt();
+        let mut stdev_req_elapsed_time =
+            self.stdev_req_elapsed_time.lock().await;
+        *stdev_req_elapsed_time = Duration::from_nanos(stdev as u64);
 
         // clear after using
         elapsed_time.clear();
         elapsed_time.shrink_to(0);
+    }
+
+    async fn calculate_stdev_per_second(&self) {
+        let req_per_second = self.req_per_second.lock().await;
+        if (*req_per_second).is_empty() {
+            return;
+        }
+
+        let mut origin = &*req_per_second as &[u64];
+
+        // break off both ends
+        if origin[0] == 0 {
+            origin = &origin[1..];
+        }
+        if origin.len() >= 2 {
+            origin = &origin[..origin.len() - 1];
+        }
+
+        let count = origin.len();
+        let sum = origin.iter().sum::<u64>();
+        let mean = sum as f64 / count as f64;
+        let variance = origin
+            .iter()
+            .map(|x| {
+                let diff = *x as f64 - mean;
+                diff * diff
+            })
+            .sum::<f64>()
+            / count as f64;
+        let mut stdev_per_second = self.stdev_per_second.lock().await;
+        *stdev_per_second = variance.sqrt();
     }
 
     /// need to manually call this method for statistical summary
@@ -240,6 +300,7 @@ impl Statistics {
         self.calculate_max_per_second().await;
         self.calculate_avg_per_second().await;
         self.calculate_elapsed_time().await;
+        self.calculate_stdev_per_second().await;
     }
 }
 
