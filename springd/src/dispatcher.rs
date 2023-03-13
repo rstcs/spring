@@ -53,7 +53,7 @@ fn new_limiter(rate: &Option<u16>) -> Option<Limiter> {
 }
 
 impl CountDispatcher {
-    /// give total and rat, return [Dispatcher]
+    /// give total and rat, return [CountDispatcher]
     pub fn new(total: u64, rate: &Option<u16>) -> Self {
         Self {
             total,
@@ -141,6 +141,7 @@ pub struct DurationDispatcher {
 }
 
 impl DurationDispatcher {
+    /// give total and rat, return [DurationDispatcher]
     pub fn new(duration: Duration, rate: &Option<u16>) -> Self {
         Self {
             duration,

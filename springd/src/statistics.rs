@@ -1,6 +1,5 @@
 //! mod statistics counts all relevant information about the server response
 
-use log::error;
 use num::integer::Roots;
 use reqwest::{Error, Response, StatusCode};
 use std::collections::HashMap;
@@ -70,6 +69,9 @@ pub(crate) struct Statistics {
 
     /// recording stop time
     stopped_at: tsync::Mutex<Option<Instant>>,
+
+    /// throughput, connections / avg_req_elapsed_time, reqs/s
+    throughput: tsync::Mutex<f64>,
 }
 
 impl Statistics {
@@ -92,6 +94,7 @@ impl Statistics {
             is_stopped: AtomicBool::new(false),
             current_cumulative: AtomicU64::new(0),
             stopped_at: tsync::Mutex::new(None),
+            throughput: tsync::Mutex::new(0.0),
             elapsed_time: tsync::Mutex::new(Vec::new()),
             avg_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
             max_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
@@ -295,12 +298,20 @@ impl Statistics {
         *stdev_per_second = variance.sqrt();
     }
 
+    async fn calculate_throughput(&self, connections: u16) {
+        let avg_req_elapsed_time = self.avg_req_elapsed_time.lock().await;
+        let mut throughput = self.throughput.lock().await;
+        let sec = (*avg_req_elapsed_time).as_secs_f64();
+        *throughput = connections as f64 / sec;
+    }
+
     /// need to manually call this method for statistical summary
-    pub(crate) async fn summary(&self) {
+    pub(crate) async fn summary(&self, connections: u16) {
         self.calculate_max_per_second().await;
         self.calculate_avg_per_second().await;
         self.calculate_elapsed_time().await;
         self.calculate_stdev_per_second().await;
+        self.calculate_throughput(connections).await;
     }
 }
 

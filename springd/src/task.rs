@@ -176,7 +176,10 @@ impl Task {
             // wait statistics summary
             let task_copy = self.clone();
             tokio::spawn(async move {
-                task_copy.statistics.summary().await;
+                task_copy
+                    .statistics
+                    .summary(task_copy.arg.connections)
+                    .await;
             })
             .await
             .expect("statistics summary failed");
