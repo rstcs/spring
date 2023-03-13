@@ -33,7 +33,10 @@ pub(crate) struct Statistics {
     /// start time
     started_at: tsync::Mutex<Instant>,
 
-    /// total send and receive response requests
+    /// total_success send and receive response requests
+    total_success: AtomicU64,
+
+    /// total send and receive response requests although meets error
     total: AtomicU64,
 
     /// maximum per second
@@ -90,6 +93,7 @@ impl Statistics {
             errors: tsync::Mutex::new(HashMap::new()),
             started_at: tsync::Mutex::new(Instant::now()),
             total: AtomicU64::new(0),
+            total_success: AtomicU64::new(0),
             req_per_second: tsync::Mutex::new(Vec::new()),
             avg_req_per_second: tsync::Mutex::new(0.0),
             max_req_per_second: tsync::Mutex::new(0.0),
@@ -104,6 +108,11 @@ impl Statistics {
             max_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
             stdev_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
         }
+    }
+
+    /// return current send and rcv requests
+    pub(crate) fn get_total(&self) -> u64 {
+        self.total.load(Acquire)
     }
 
     /// if there will be a lot of preparation work before starting the
@@ -189,6 +198,8 @@ impl Statistics {
             response,
         } = message;
 
+        self.total.fetch_add(1, SeqCst);
+
         if response.is_err() {
             let err = response.err().unwrap();
             self.handle_resp_error(err).await;
@@ -197,7 +208,7 @@ impl Statistics {
 
         let response = response.unwrap();
         self.statistics_rsp_code(response.status());
-        self.total.fetch_add(1, SeqCst);
+        self.total_success.fetch_add(1, SeqCst);
         self.current_cumulative.fetch_add(1, SeqCst);
         let mut elapsed_time = self.elapsed_time.lock().await;
         elapsed_time.push(rsp_at - req_at);
@@ -227,7 +238,7 @@ impl Statistics {
                 return;
             }
             let mut avg_per_second = self.avg_req_per_second.lock().await;
-            *avg_per_second = self.total.load(SeqCst) as f64 / delta;
+            *avg_per_second = self.total_success.load(SeqCst) as f64 / delta;
         }
     }
 

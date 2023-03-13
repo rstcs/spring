@@ -118,10 +118,10 @@ pub struct Arg {
     #[arg(
         long,
         short,
-        default_value_t = 125,
+        default_value_t = 50,
         help = "Maximum number of concurrent connections"
     )]
-    pub(crate) connections: u16,
+    pub connections: u16,
 
     /// Socket/request timeout
     #[arg(
@@ -156,7 +156,7 @@ pub struct Arg {
         value_enum,
         help = "Request method"
     )]
-    pub(crate) method: Method,
+    pub method: Method,
 
     /// Disable HTTP keep-alive
     #[arg(long, short = 'a', help = "Disable HTTP keep-alive")]
@@ -178,7 +178,7 @@ pub struct Arg {
         help = "Number of requests",
         required_unless_present_any(["duration", "completions"])
     )]
-    pub(crate) requests: Option<u64>,
+    pub requests: Option<u64>,
 
     /// Duration of test
     #[arg(
@@ -188,7 +188,7 @@ pub struct Arg {
         help = "Duration of test",
         required_unless_present_any(["requests", "completions"])
     )]
-    pub(crate) duration: Option<Duration>,
+    pub duration: Option<Duration>,
 
     /// Rate limit in requests per second
     #[arg(long, short = 'r', help = "Rate limit in requests per second")]
@@ -294,7 +294,7 @@ pub struct Arg {
         value_hint = ValueHint::Url,
         help = "Target Url"
     )]
-    pub(crate) url: Option<String>,
+    pub url: Option<String>,
 }
 
 #[cfg(test)]
