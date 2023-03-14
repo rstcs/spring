@@ -232,6 +232,9 @@ impl Task {
             // wait statistics timer end
             stat_timer.await.expect("statistics timer tun failed");
 
+            // finish progress bar
+            self.clone().finish_progress_bar();
+
             // wait statistics summary
             let task = self.clone();
             tokio::spawn(async move {
@@ -242,11 +245,8 @@ impl Task {
             .await
             .expect("statistics summary failed");
 
-            // error!("{:#?}", self.statistics);
+            error!("{:#?}", self.statistics);
         });
-
-        // finish progress bar
-        self.finish_progress_bar();
 
         Ok(())
     }

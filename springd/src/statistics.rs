@@ -1,8 +1,9 @@
 //! mod statistics counts all relevant information about the server response
 
 use num::integer::Roots;
-use reqwest::{Error, Response, StatusCode};
+use reqwest::{Response, StatusCode};
 use std::collections::HashMap;
+use std::error::Error;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::*};
 use std::time::{Duration, Instant};
 use tokio::{sync as tsync, time as ttime};
@@ -56,16 +57,16 @@ pub(crate) struct Statistics {
     current_cumulative: AtomicU64,
 
     /// average time spent on request
-    avg_req_elapsed_time: tsync::Mutex<Duration>,
+    avg_req_used_time: tsync::Mutex<Duration>,
 
     /// maximum time spent by the request
-    max_req_elapsed_time: tsync::Mutex<Duration>,
+    max_req_used_time: tsync::Mutex<Duration>,
 
     /// stdev per request, link: https://en.wikipedia.org/wiki/Standard_deviation
-    stdev_req_elapsed_time: tsync::Mutex<Duration>,
+    stdev_req_used_time: tsync::Mutex<Duration>,
 
     /// used internally to record the time spent on each request
-    elapsed_time: tsync::Mutex<Vec<Duration>>,
+    used_time: tsync::Mutex<Vec<Duration>>,
 
     /// indicates whether to stop, used to notify the internal timer to exit
     is_stopped: AtomicBool,
@@ -103,10 +104,10 @@ impl Statistics {
             stopped_at: tsync::Mutex::new(None),
             latencies: tsync::Mutex::new(Vec::new()),
             throughput: tsync::Mutex::new(0.0),
-            elapsed_time: tsync::Mutex::new(Vec::new()),
-            avg_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
-            max_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
-            stdev_req_elapsed_time: tsync::Mutex::new(Duration::from_secs(0)),
+            used_time: tsync::Mutex::new(Vec::new()),
+            avg_req_used_time: tsync::Mutex::new(Duration::from_secs(0)),
+            max_req_used_time: tsync::Mutex::new(Duration::from_secs(0)),
+            stdev_req_used_time: tsync::Mutex::new(Duration::from_secs(0)),
         }
     }
 
@@ -178,13 +179,15 @@ impl Statistics {
         }
     }
 
-    async fn handle_resp_error(&self, err: Error) {
-        let err_msg = format!("{err}");
-        let mut errors = self.errors.lock().await;
-        errors
-            .entry(err_msg)
-            .and_modify(|count| *count += 1)
-            .or_insert(1);
+    async fn handle_resp_error(&self, err: reqwest::Error) {
+        let err_msg = format!("{}", err.source().as_ref().unwrap());
+        {
+            let mut errors = self.errors.lock().await;
+            errors
+                .entry(err_msg)
+                .and_modify(|count| *count += 1)
+                .or_insert(1);
+        }
         if let Some(status) = err.status() {
             self.statistics_rsp_code(status);
         }
@@ -210,8 +213,8 @@ impl Statistics {
         self.statistics_rsp_code(response.status());
         self.total_success.fetch_add(1, SeqCst);
         self.current_cumulative.fetch_add(1, SeqCst);
-        let mut elapsed_time = self.elapsed_time.lock().await;
-        elapsed_time.push(rsp_at - req_at);
+        let mut used_time = self.used_time.lock().await;
+        used_time.push(rsp_at - req_at);
     }
 
     /// notify stop timer
@@ -243,28 +246,28 @@ impl Statistics {
     }
 
     async fn calculate_elapsed_time(&self) {
-        let mut elapsed_time = self.elapsed_time.lock().await;
-        if (*elapsed_time).is_empty() {
+        let mut used_time = self.used_time.lock().await;
+        if (*used_time).is_empty() {
             return;
         }
-        elapsed_time.sort();
+        used_time.sort();
 
         // avg_req_elapsed_time
-        let mut avg_req_elapsed_time = self.avg_req_elapsed_time.lock().await;
-        let total: Duration = elapsed_time.iter().sum();
-        let count = elapsed_time.len();
-        *avg_req_elapsed_time = total / count as u32;
+        let mut avg_req_used_time = self.avg_req_used_time.lock().await;
+        let total: Duration = used_time.iter().sum();
+        let count = used_time.len();
+        *avg_req_used_time = total / count as u32;
 
         // max_req_elapsed_time
-        let mut max_req_elapsed_time = self.max_req_elapsed_time.lock().await;
-        if let Some(max) = elapsed_time.iter().max() {
-            *max_req_elapsed_time = *max;
+        let mut max_req_used_time = self.max_req_used_time.lock().await;
+        if let Some(max) = used_time.iter().max() {
+            *max_req_used_time = *max;
         }
 
         // stdev_req_elapsed_time
-        let sum = (*elapsed_time).iter().sum::<Duration>();
+        let sum = (*used_time).iter().sum::<Duration>();
         let mean = (sum as Duration / count as u32).as_nanos();
-        let variance: u128 = (*elapsed_time)
+        let variance: u128 = (*used_time)
             .iter()
             .map(|x| {
                 let diff: i128 = (*x).as_nanos() as i128 - mean as i128;
@@ -273,9 +276,8 @@ impl Statistics {
             .sum::<u128>()
             / count as u128;
         let stdev = variance.sqrt();
-        let mut stdev_req_elapsed_time =
-            self.stdev_req_elapsed_time.lock().await;
-        *stdev_req_elapsed_time = Duration::from_nanos(stdev as u64);
+        let mut stdev_req_used_time = self.stdev_req_used_time.lock().await;
+        *stdev_req_used_time = Duration::from_nanos(stdev as u64);
     }
 
     async fn calculate_stdev_per_second(&self) {
@@ -290,7 +292,7 @@ impl Statistics {
         if origin[0] == 0 {
             origin = &origin[1..];
         }
-        if origin.len() >= 2 {
+        if origin.len() > 2 {
             origin = &origin[..origin.len() - 1];
         }
 
@@ -310,39 +312,39 @@ impl Statistics {
     }
 
     async fn calculate_throughput(&self, connections: u16) {
-        let avg_req_elapsed_time = self.avg_req_elapsed_time.lock().await;
+        let avg_req_used_time = self.avg_req_used_time.lock().await;
         let mut throughput = self.throughput.lock().await;
-        let sec = (*avg_req_elapsed_time).as_secs_f64();
+        let sec = (*avg_req_used_time).as_secs_f64();
         *throughput = connections as f64 / sec;
     }
 
     async fn calculate_latencies(&self, percentiles: Vec<f32>) {
-        let mut elapsed_time = self.elapsed_time.lock().await;
-        if elapsed_time.is_empty() {
+        let mut used_time = self.used_time.lock().await;
+        if used_time.is_empty() {
             return;
         }
-        if !elapsed_time.is_sorted() {
-            elapsed_time.sort();
+        if !used_time.is_sorted() {
+            used_time.sort();
         }
 
         let mut latencies = self.latencies.lock().await;
-        let count = elapsed_time.len();
+        let count = used_time.len();
         for percent in percentiles {
             let percent_len = (count as f32 * percent) as usize;
             if percent_len > count {
                 continue;
             }
             let percent_elapsed_time: &[Duration] =
-                &(*elapsed_time)[..percent_len];
+                &(*used_time)[..percent_len];
             let sum = percent_elapsed_time.iter().sum::<Duration>();
             latencies.push((percent, sum / percent_len as u32));
         }
     }
 
     async fn clear_temporary_data(&self) {
-        let mut elapsed_time = self.elapsed_time.lock().await;
-        elapsed_time.clear();
-        elapsed_time.shrink_to(0);
+        let mut used_time = self.used_time.lock().await;
+        used_time.clear();
+        used_time.shrink_to(0);
     }
 
     /// need to manually call this method for statistical summary
@@ -371,13 +373,13 @@ impl Default for Statistics {
 pub struct Message {
     rsp_at: Instant,
     req_at: Instant,
-    response: Result<Response, Error>,
+    response: Result<Response, reqwest::Error>,
 }
 
 impl Message {
     /// construct message
     pub fn new(
-        response: Result<Response, Error>,
+        response: Result<Response, reqwest::Error>,
         req_at: Instant,
         rsp_at: Instant,
     ) -> Message {
